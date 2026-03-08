@@ -1,11 +1,15 @@
 import gpiod
 import time
 
-PIN = 24   # GPIO24 = physical pin 18
+PIN = 24  # GPIO24 = physical pin 18
+
+PULSES = 20
+PERIOD_S = 0.5
+WIDTH_S = 0.02
 
 chip = gpiod.Chip("/dev/gpiochip0")
 
-line = chip.request_lines(
+req = chip.request_lines(
     consumer="parent",
     config={
         PIN: gpiod.LineSettings(
@@ -14,16 +18,24 @@ line = chip.request_lines(
     }
 )
 
+start_ns = time.monotonic_ns() + 2_000_000_000
+
+print(f"START_NS={start_ns}")
+print(f"PERIOD_NS={int(PERIOD_S * 1e9)}")
 print("Sending pulses...")
 
-for i in range(10):
+for i in range(PULSES):
+    rise_ns = start_ns + int(i * PERIOD_S * 1e9)
+    fall_ns = rise_ns + int(WIDTH_S * 1e9)
 
-    line.set_value(PIN, 1)
-    print("pulse HIGH", i)
-    time.sleep(0.02)
+    while time.monotonic_ns() < rise_ns:
+        pass
+    req.set_value(PIN, gpiod.line.Value.ACTIVE)
 
-    line.set_value(PIN, 0)
-    print("pulse LOW", i)
-    time.sleep(0.5)
+    while time.monotonic_ns() < fall_ns:
+        pass
+    req.set_value(PIN, gpiod.line.Value.INACTIVE)
+
+    print(f"pulse {i} scheduled_rise_ns={rise_ns}")
 
 print("Done")
