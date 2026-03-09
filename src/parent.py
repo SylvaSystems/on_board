@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 @author Cole Malinchock
 @file parent.py
@@ -204,7 +205,7 @@ class Parent:
                 break
 
             msg_type = msg.get_type()
-            print(msg_type)
+            # print(msg_type)
 
             if msg_type == "GLOBAL_POSITION_INT":
                 self.latest_global_position = msg
