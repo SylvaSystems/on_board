@@ -13,6 +13,7 @@ from typing import Optional
 import cv2
 import gpiod
 from picamera2 import Picamera2
+from libcamera import controls
 from pymavlink import mavutil
 
 from lib.constants import (
@@ -21,6 +22,7 @@ from lib.constants import (
     FRAME_RATE,
     CSV_PATH,
     IMG_PATH,
+    IMAGE_SIZE,
     MAVLINK_DEVICE,
     MAVLINK_BAUD,
     TOGGLE_CHANNEL,
@@ -33,7 +35,7 @@ class Parent:
     """Class for handling the parent operations."""
 
     def __init__(self):
-        
+
         # Setup the gpio to the child
         self.chip = gpiod.Chip(CHIP_NAME)
         self.pi_req = self.chip.request_lines(
@@ -60,9 +62,10 @@ class Parent:
         # Initialization sequence for camera
         self.picam = Picamera2()
         camera_config = self.picam.create_still_configuration(
-            main={"size": (4624, 3472), "format": "RGB888"}
+            main={"size": IMAGE_SIZE, "format": "RGB888"}
         )
         self.picam.configure(camera_config)
+        self.picam.set_controls({"AfMode": controls.AfModeEnum.Continuous})
         self.picam.start()
         time.sleep(2)
 
@@ -96,9 +99,9 @@ class Parent:
                     print("Toggle switched LOW: capture disabled")
 
             if self.enabled:
-                now = time.time()
-                if now - self.last_capture_time >= (1.0 / FRAME_RATE):
-                    self.last_capture_time = now
+
+                if time.time() - self.last_capture_time >= (1.0 / FRAME_RATE):
+                    self.last_capture_time = time.time()
                     self.save_image_and_pose()
                     self.idx += 1
 
@@ -110,6 +113,7 @@ class Parent:
         Returns True when the chosen RC channel is above threshold.
         Reads from cached RC_CHANNELS message.
         """
+
         msg = self.latest_rc_channels
         if msg is None:
             return False
