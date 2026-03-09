@@ -1,0 +1,5 @@
+python -m MAVProxy.mavproxy \
+  --master=/dev/ttyAMA0 \
+  --baudrate 57600 \
+  --out=127.0.0.1:14550 \
+  --out=127.0.0.1:14551

@@ -22,8 +22,8 @@ from lib.constants import (
     IMG_PATH,
     MAVLINK_DEVICE,
     MAVLINK_BAUD,
-    TOGGLE_CHANNEL,          # e.g. 7 for RC7
-    TOGGLE_THRESHOLD,    # e.g. 1500
+    TOGGLE_CHANNEL,
+    TOGGLE_THRESHOLD,
 )
 from lib.structs import Pose, Img
 
@@ -32,7 +32,8 @@ class Parent:
     """Class for handling the parent operations."""
 
     def __init__(self):
-        # ---------------- GPIO to child ----------------
+        
+        # Setup the gpio to the child
         self.chip = gpiod.Chip(CHIP_NAME)
         self.pi_req = self.chip.request_lines(
             consumer="parent",
@@ -45,18 +46,17 @@ class Parent:
         self.child_line_active = False
         self.pi_req.set_value(PI_PIN, gpiod.line.Value.INACTIVE)
 
-        # ---------------- Runtime state ----------------
+        # Initialization sequence for variables
         self.idx = 0
         self.enabled = False
         self.last_capture_time = 0.0
 
-        # ---------------- Paths ----------------
+        # Create the paths
         os.makedirs(IMG_PATH, exist_ok=True)
         os.makedirs(os.path.dirname(CSV_PATH), exist_ok=True)
-
         self._init_csv()
 
-        # ---------------- Camera ----------------
+        # Initialization sequence for camera
         self.picam = Picamera2()
         camera_config = self.picam.create_still_configuration(
             main={"size": (4624, 3472), "format": "RGB888"}
@@ -65,38 +65,13 @@ class Parent:
         self.picam.start()
         time.sleep(2)
 
-        # ---------------- MAVLink ----------------
-        self.master = mavutil.mavlink_connection(
-            MAVLINK_DEVICE,
-            baud=MAVLINK_BAUD,
-        )
+        # Initialization sequence for pixhawk
+        self.master = mavutil.mavlink_connection("udp:127.0.0.1:14550")
 
+        # Gets the pixhawk heartbeat
         print("Waiting for heartbeat from Pixhawk...")
         self.master.wait_heartbeat()
         print("Heartbeat received.")
-
-        # Request streams. ArduPilot supports requesting stream/data rates. :contentReference[oaicite:2]{index=2}
-        self.master.mav.request_data_stream_send(
-            self.master.target_system,
-            self.master.target_component,
-            mavutil.mavlink.MAV_DATA_STREAM_POSITION,
-            10,
-            1,
-        )
-        self.master.mav.request_data_stream_send(
-            self.master.target_system,
-            self.master.target_component,
-            mavutil.mavlink.MAV_DATA_STREAM_EXTRA1,
-            10,
-            1,
-        )
-        self.master.mav.request_data_stream_send(
-            self.master.target_system,
-            self.master.target_component,
-            mavutil.mavlink.MAV_DATA_STREAM_RC_CHANNELS,
-            10,
-            1,
-        )
 
         # Cached MAVLink data
         self.latest_global_position = None
@@ -104,18 +79,6 @@ class Parent:
         self.latest_attitude = None
         self.latest_rc_channels = None
 
-    def _init_csv(self):
-        file_exists = os.path.exists(CSV_PATH)
-        with open(CSV_PATH, "a", newline="") as f:
-            writer = csv.writer(f)
-            if not file_exists:
-                writer.writerow([
-                    "id", "img_timestamp", "pose_timestamp", "img_path",
-                    "lat_deg", "lon_deg", "alt_m",
-                    "x_m", "y_m", "z_m",
-                    "roll_rad", "pitch_rad", "yaw_rad",
-                    "toggle_enabled",
-                ])
 
     def run(self):
         """Main loop."""
@@ -136,8 +99,10 @@ class Parent:
                 if now - self.last_capture_time >= (1.0 / FRAME_RATE):
                     self.last_capture_time = now
                     self.save_image_and_pose()
+                    self.idx += 1
 
             time.sleep(0.005)
+
 
     def is_enabled(self) -> bool:
         """
@@ -154,6 +119,7 @@ class Parent:
             return False
 
         return pwm >= TOGGLE_THRESHOLD
+
 
     def save_image_and_pose(self):
         self._notify_child()
@@ -172,6 +138,7 @@ class Parent:
                 int(self.enabled)
             ])
 
+
     def _notify_child(self):
         """
         Pulse the child line. Child should watch for edge.
@@ -179,6 +146,7 @@ class Parent:
         self.pi_req.set_value(PI_PIN, gpiod.line.Value.ACTIVE)
         time.sleep(0.002)  # 2 ms pulse
         self.pi_req.set_value(PI_PIN, gpiod.line.Value.INACTIVE)
+
 
     def _get_image(self) -> Img:
         frame = self.picam.capture_array()
@@ -190,6 +158,7 @@ class Parent:
             timestamp=ts,
             id=self.idx,
         )
+
 
     def _get_pose(self) -> Pose:
         """
@@ -227,29 +196,43 @@ class Parent:
             timestamp=time.time(), id=self.idx
         )
 
+
     def _poll_mavlink(self):
-        """
-        Non-blocking read of all pending MAVLink messages.
-        Pymavlink's mavutil is the standard Python entry point for this.
-        """
         while True:
             msg = self.master.recv_match(blocking=False)
             if msg is None:
                 break
 
             msg_type = msg.get_type()
+            print(msg_type)
 
             if msg_type == "GLOBAL_POSITION_INT":
                 self.latest_global_position = msg
-
             elif msg_type == "LOCAL_POSITION_NED":
                 self.latest_local_position = msg
-
             elif msg_type == "ATTITUDE":
                 self.latest_attitude = msg
-
             elif msg_type == "RC_CHANNELS":
                 self.latest_rc_channels = msg
+
+
+    def _init_csv(self):
+        """ Initializes the csv """
+
+        # Checks that the file exists
+        file_exists = os.path.exists(CSV_PATH)
+
+        # Writes to the csv if it doesn't exist yet
+        with open(CSV_PATH, "a", newline="") as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow([
+                    "id", "img_timestamp", "pose_timestamp", "img_path",
+                    "lat_deg", "lon_deg", "alt_m",
+                    "x_m", "y_m", "z_m",
+                    "roll_rad", "pitch_rad", "yaw_rad",
+                    "toggle_enabled",
+                ])
 
 
 if __name__ == "__main__":
