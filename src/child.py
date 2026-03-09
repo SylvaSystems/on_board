@@ -14,6 +14,7 @@ from lib.constants import (
     PI_PIN,
     CHIP_NAME,
     IMG_PATH,
+    IMAGE_SIZE
 )
 from lib.structs import Img
 
@@ -22,7 +23,7 @@ class Child:
     """Class for handling the child operations."""
 
     def __init__(self):
-        # ---------------- GPIO from parent ----------------
+
         self.chip = gpiod.Chip(CHIP_NAME)
         self.pi_req = self.chip.request_lines(
             consumer="child",
@@ -34,16 +35,13 @@ class Child:
             }
         )
 
-        # ---------------- Runtime state ----------------
         self.idx = 0
 
-        # ---------------- Paths ----------------
         os.makedirs(IMG_PATH, exist_ok=True)
 
-        # ---------------- Camera ----------------
         self.picam = Picamera2()
         camera_config = self.picam.create_still_configuration(
-            main={"size": (4624, 3472), "format": "RGB888"}
+            main={"size": IMAGE_SIZE, "format": "RGB888"}
         )
         self.picam.configure(camera_config)
         self.picam.start()
