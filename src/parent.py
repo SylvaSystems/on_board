@@ -7,8 +7,7 @@
 import csv
 import os
 import time
-from dataclasses import asdict
-from typing import Optional
+import subprocess
 
 import cv2
 import gpiod
@@ -23,8 +22,6 @@ from lib.constants import (
     CSV_PATH,
     IMG_PATH,
     IMAGE_SIZE,
-    MAVLINK_DEVICE,
-    MAVLINK_BAUD,
     TOGGLE_CHANNEL,
     TOGGLE_THRESHOLD,
 )
@@ -128,15 +125,17 @@ class Parent:
 
     def save_image_and_pose(self):
         self._notify_child()
-        img = self._get_image()
-        cv2.imwrite(img.path_name, img.img)
+
+        path = f"{IMG_PATH}/{self.idx:010d}.jpg"
+        t_img = time.time()
+        self._capture_image_file(path)
 
         pose = self._get_pose()
 
         with open(CSV_PATH, "a", newline="") as f:
             writer = csv.writer(f)
             writer.writerow([
-                img.id, img.timestamp, pose.timestamp, img.path_name,
+                self.idx, t_img, pose.timestamp, path,
                 pose.lat, pose.lon, pose.alt,
                 pose.x, pose.y, pose.z,
                 pose.roll, pose.pitch, pose.yaw,
@@ -238,6 +237,18 @@ class Parent:
                     "roll_rad", "pitch_rad", "yaw_rad",
                     "toggle_enabled",
                 ])
+
+
+    def _capture_image_file(self, path: str):
+        subprocess.run([
+            "rpicam-still",
+            "-t", "1000",
+            "--width", str(IMAGE_SIZE[0]),
+            "--height", str(IMAGE_SIZE[1]),
+            "--autofocus-on-capture",
+            "--nopreview",
+            "-o", path,
+        ], check=True)
 
 
 if __name__ == "__main__":
