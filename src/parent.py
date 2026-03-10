@@ -62,7 +62,6 @@ class Parent:
             main={"size": IMAGE_SIZE, "format": "RGB888"}
         )
         self.picam.configure(camera_config)
-        self.picam.set_controls({"AfMode": controls.AfModeEnum.Continuous})
         self.picam.start()
         time.sleep(2)
 

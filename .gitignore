@@ -3,3 +3,8 @@
 logs/*
 __pycache__/
 mav.*
+*.pyc
+logs/images/
+*.tlog
+*.tlog.raw
+*.egg-info/
