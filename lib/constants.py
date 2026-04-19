@@ -13,7 +13,7 @@ FRAME_RATE = 1 # The rate to take photos
 CSV_PATH = f"{os.getenv('LOG_PATH')}/log.csv" # The path to save the csv log for pose
 IMG_PATH = f"{os.getenv('LOG_PATH')}/images" # The path to the directory to log the images
 
-IMAGE_SIZE = (1920,1080)
+IMAGE_SIZE = (4656,3496)
 
 MAVLINK_DEVICE = "/dev/ttyAMA0" # The device to connect to the pixhawk
 MAVLINK_BAUD = 57600 # The baud rate for the pixhawk

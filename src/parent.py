@@ -123,13 +123,18 @@ class Parent:
 
 
     def save_image_and_pose(self):
+
         self._notify_child()
+
+        print("Child notified")
 
         path = f"{IMG_PATH}/{self.idx:010d}.jpg"
         t_img = time.time()
         self._capture_image_file(path)
-
+        print("Image captured")
         pose = self._get_pose()
+
+        print("Pose received")
 
         with open(CSV_PATH, "a", newline="") as f:
             writer = csv.writer(f)
@@ -140,6 +145,8 @@ class Parent:
                 pose.roll, pose.pitch, pose.yaw,
                 int(self.enabled)
             ])
+
+        print("Image saved!")
 
 
     def _notify_child(self):
@@ -244,7 +251,7 @@ class Parent:
             "-t", "1000",
             "--width", str(IMAGE_SIZE[0]),
             "--height", str(IMAGE_SIZE[1]),
-            "--autofocus-on-capture",
+            "--autofocus", "manual",
             "--nopreview",
             "-o", path,
         ], check=True)
