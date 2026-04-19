@@ -7,9 +7,7 @@
 import csv
 import os
 import time
-import subprocess
 
-import cv2
 import gpiod
 from picamera2 import Picamera2
 from libcamera import controls
@@ -25,14 +23,19 @@ from lib.constants import (
     TOGGLE_CHANNEL,
     TOGGLE_THRESHOLD,
 )
-from lib.structs import Pose, Img
+from lib.structs import Pose
+
+
+# ----- Camera tuning -----
+# Start with 0.0, then adjust after your focus sweep if needed.
+MANUAL_FOCUS_ENABLED = True
+LENS_POSITION = 0.0
 
 
 class Parent:
     """Class for handling the parent operations."""
 
     def __init__(self):
-
         # Setup the gpio to the child
         self.chip = gpiod.Chip(CHIP_NAME)
         self.pi_req = self.chip.request_lines(
@@ -43,7 +46,6 @@ class Parent:
                 )
             }
         )
-        self.child_line_active = False
         self.pi_req.set_value(PI_PIN, gpiod.line.Value.INACTIVE)
 
         # Initialization sequence for variables
@@ -62,8 +64,26 @@ class Parent:
             main={"size": IMAGE_SIZE, "format": "RGB888"}
         )
         self.picam.configure(camera_config)
+        self.picam.set_controls({
+            "AfMode": controls.AfModeEnum.Manual,
+            "LensPosition": 0.0,
+            "AeEnable": False,
+            "ExposureTime": 1000,
+            "AnalogueGain": 1.0,
+        })
         self.picam.start()
         time.sleep(2)
+
+        # Manual focus setup
+        if MANUAL_FOCUS_ENABLED:
+            try:
+                self.picam.set_controls({
+                    "AfMode": controls.AfModeEnum.Manual,
+                    "LensPosition": LENS_POSITION,
+                })
+                print(f"Manual focus enabled. LensPosition={LENS_POSITION}")
+            except Exception as e:
+                print(f"Warning: failed to set manual focus controls: {e}")
 
         # Initialization sequence for pixhawk
         self.master = mavutil.mavlink_connection("udp:127.0.0.1:14550")
@@ -79,37 +99,51 @@ class Parent:
         self.latest_attitude = None
         self.latest_rc_channels = None
 
-
     def run(self):
         """Main loop."""
-        while True:
-            self._poll_mavlink()
+        try:
+            while True:
+                self._poll_mavlink()
 
-            new_enabled = self.is_enabled()
+                new_enabled = self.is_enabled()
 
-            if new_enabled != self.enabled:
-                self.enabled = new_enabled
-                if self.enabled:
-                    print("Toggle switched HIGH: capture enabled")
-                else:
-                    print("Toggle switched LOW: capture disabled")
+                if new_enabled != self.enabled:
+                    self.enabled = new_enabled
+                    if self.enabled:
+                        print("Toggle switched HIGH: capture enabled")
+                    else:
+                        print("Toggle switched LOW: capture disabled")
 
-            if self.enabled:
+                now = time.time()
+                if self.enabled and (now - self.last_capture_time >= (1.0 / FRAME_RATE)):
+                    success = self.save_image_and_pose()
+                    self.last_capture_time = now
 
-                if time.time() - self.last_capture_time >= (1.0 / FRAME_RATE):
-                    self.last_capture_time = time.time()
-                    self.save_image_and_pose()
-                    self.idx += 1
+                    if success:
+                        self.idx += 1
 
-            time.sleep(0.005)
+                time.sleep(0.005)
 
+        finally:
+            self.close()
+
+    def close(self):
+        """Clean shutdown."""
+        try:
+            self.pi_req.set_value(PI_PIN, gpiod.line.Value.INACTIVE)
+        except Exception:
+            pass
+
+        try:
+            self.picam.stop()
+        except Exception:
+            pass
 
     def is_enabled(self) -> bool:
         """
         Returns True when the chosen RC channel is above threshold.
         Reads from cached RC_CHANNELS message.
         """
-
         msg = self.latest_rc_channels
         if msg is None:
             return False
@@ -121,33 +155,46 @@ class Parent:
 
         return pwm >= TOGGLE_THRESHOLD
 
-
-    def save_image_and_pose(self):
-
-        self._notify_child()
-
-        print("Child notified")
-
+    def save_image_and_pose(self) -> bool:
+        """Capture image, read pose, and append one row to CSV."""
         path = f"{IMG_PATH}/{self.idx:010d}.jpg"
-        t_img = time.time()
-        self._capture_image_file(path)
-        print("Image captured")
-        pose = self._get_pose()
 
-        print("Pose received")
+        try:
+            # Notify child first for near-simultaneous capture
+            self._notify_child()
+            print("Child notified")
 
-        with open(CSV_PATH, "a", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                self.idx, t_img, pose.timestamp, path,
-                pose.lat, pose.lon, pose.alt,
-                pose.x, pose.y, pose.z,
-                pose.roll, pose.pitch, pose.yaw,
-                int(self.enabled)
-            ])
+            t0 = time.time()
+            self._capture_image_file(path)
+            t1 = time.time()
 
-        print("Image saved!")
+            if not os.path.exists(path):
+                raise RuntimeError(f"Capture reported success but file missing: {path}")
 
+            print(f"Image captured: {path}")
+
+            pose = self._get_pose()
+            print("Pose received")
+
+            # Approximate image timestamp as midpoint of capture call
+            t_img = 0.5 * (t0 + t1)
+
+            with open(CSV_PATH, "a", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    self.idx, t_img, pose.timestamp, path,
+                    pose.lat, pose.lon, pose.alt,
+                    pose.x, pose.y, pose.z,
+                    pose.roll, pose.pitch, pose.yaw,
+                    int(self.enabled)
+                ])
+
+            print("Image + pose saved")
+            return True
+
+        except Exception as e:
+            print(f"Capture failed for idx {self.idx}: {e}")
+            return False
 
     def _notify_child(self):
         """
@@ -156,19 +203,6 @@ class Parent:
         self.pi_req.set_value(PI_PIN, gpiod.line.Value.ACTIVE)
         time.sleep(0.002)  # 2 ms pulse
         self.pi_req.set_value(PI_PIN, gpiod.line.Value.INACTIVE)
-
-
-    def _get_image(self) -> Img:
-        frame = self.picam.capture_array()
-        ts = time.time()
-
-        return Img(
-            img=frame,
-            path_name=f"{IMG_PATH}/{self.idx:010d}.jpg",
-            timestamp=ts,
-            id=self.idx,
-        )
-
 
     def _get_pose(self) -> Pose:
         """
@@ -206,7 +240,6 @@ class Parent:
             timestamp=time.time(), id=self.idx
         )
 
-
     def _poll_mavlink(self):
         while True:
             msg = self.master.recv_match(blocking=False)
@@ -214,7 +247,6 @@ class Parent:
                 break
 
             msg_type = msg.get_type()
-            # print(msg_type)
 
             if msg_type == "GLOBAL_POSITION_INT":
                 self.latest_global_position = msg
@@ -225,14 +257,10 @@ class Parent:
             elif msg_type == "RC_CHANNELS":
                 self.latest_rc_channels = msg
 
-
     def _init_csv(self):
-        """ Initializes the csv """
-
-        # Checks that the file exists
+        """Initializes the CSV."""
         file_exists = os.path.exists(CSV_PATH)
 
-        # Writes to the csv if it doesn't exist yet
         with open(CSV_PATH, "a", newline="") as f:
             writer = csv.writer(f)
             if not file_exists:
@@ -244,17 +272,12 @@ class Parent:
                     "toggle_enabled",
                 ])
 
-
     def _capture_image_file(self, path: str):
-        subprocess.run([
-            "rpicam-still",
-            "-t", "1000",
-            "--width", str(IMAGE_SIZE[0]),
-            "--height", str(IMAGE_SIZE[1]),
-            "--autofocus", "manual",
-            "--nopreview",
-            "-o", path,
-        ], check=True)
+        """
+        Capture directly through the already-open Picamera2 instance.
+        This avoids the camera-busy problem caused by spawning rpicam-still.
+        """
+        self.picam.capture_file(path)
 
 
 if __name__ == "__main__":
